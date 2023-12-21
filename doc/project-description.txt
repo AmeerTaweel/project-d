@@ -1,0 +1,146 @@
+# Database Description
+
+Employee:
+    + ID
+        - System Generated
+        - Unique
+    + Government ID
+        - Unique
+    + Name
+        - First Name
+        - Last Name
+    + Roles
+        - Multivalue
+        - Used for permissions
+    + Personal Image
+    + Supervisor ID
+        - Foreign key to Employee
+        - Each employee can have at most one supervisor
+    + Deparment ID
+        - Foreign key to Department
+    + Title
+    + Salary
+    + Date Of Birth
+    + Sex
+    + Phone Number
+    + Email
+    + Username
+    + Password
+
+Department:
+    + ID
+        - System Generated
+        - Unique
+    + Name
+    + Manager
+        - Foreign key to Employee
+
+Transaction:
+    + ID
+        - System Generated
+        - Unique
+    + Timestamp
+    + Delta
+
+Supplier:
+    + ID
+        - System Generated
+        - Unique
+    + Name
+        - First Name
+        - Last Name
+
+Item:
+    + ID
+        - System Generated
+        - Unique
+    + Supplier ID
+    + Name
+    + Buying  Price
+    + Selling Price
+    + Description
+    + Image
+    + Categroy
+        - Multivalue
+    + Stock
+
+Customer:
+    + ID
+        - System Generated
+        - Unique
+    + Name
+        - First Name
+        - Last Name
+    + Phone Number
+    + Email
+
+Order:
+    + ID
+        - System Generated
+        - Unique
+    + Supplier ID
+        - Foreign key to Supplier
+    + Transaction ID
+        - Foreign key to Transaction
+
+Order Items:
+    + Order ID
+        - Foreign key to Order
+    + Item ID
+        - Foreign key to Item
+    + Count
+
+Purchases:
+    + ID
+        - System Generated
+        - Unique
+    + Customer ID
+        - Foreign key to Customer
+    + Transaction ID
+        - Foreign key to Transaction
+
+Purchased Items
+    + Purchase ID
+        - Foreign key to Purchase
+    + Item ID
+        - Foreign key to Item
+    + Count
+
+** Assumption: Each item can be supplied by one supplier.
+
+## HR Module
+
+Job Posting:
+    + ID
+        - System Generated
+        - Unique
+    + Title
+    + Discreption
+    + Requirements
+    + Department ID
+        - Foreign key to Department
+    + Post Date
+    + Status
+
+Application:
+    + ID
+        - System Generated
+        - Unique
+    + Name
+        - First Name
+        - Last Name
+    + Phone Number
+    + CV
+    + Email
+    + Job Posting ID
+        - Foreign key to Job Posting
+    + Application Date
+    + Status
+
+Attendance:
+    + Employee ID
+        - Foreign key to employee
+    + Timestamp
+    + Type
+        - Check-In
+        - Check-Out
