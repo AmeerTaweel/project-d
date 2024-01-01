@@ -1,0 +1,63 @@
+CREATE TABLE Employee(
+    fname:            CHAR(30),
+    lname:            CHAR(30),
+    gid:              INTEGER,
+    eid:              INTEGER,
+    username:         CHAR(30),
+    password:         CHAR(30),
+    title:            CHAR(30),
+    salary:           INTEGER,
+    e-mail:           CHAR(30),
+    phone_no:         INTEGER,
+    personal_img:     CHAR(30),
+    sex:              CHAR(6),
+    dob:              CHAR(10),
+    PRIMARY KEY (eid),
+    did:              INTEGER,
+    FOREIGN KEY did REFERENCES Department,
+    supervisor_eid    INTEGER,
+    FOREIGN KEY supervisor_eid REFERENCES Employee)
+
+CREATE TABLE Department(
+    did:              INTEGER,
+    name:             CHAR(30),
+    PRIMARY KEY (did),
+    eid:              INTEGER,
+    FOREIGN KEY eid REFERENCES Employee)
+
+CREATE TABLE Job_Post(
+    jpid:             INTEGER,
+    title:            CHAR(30),
+    description:      CHAR(30),
+    requirements:     CHAR(30),
+    post_date:        CHAR(30),
+    status:           CHAR(30),
+    PRIMARY KEY (jpid),
+    did:              INTEGER,
+    FOREIGN KEY did REFERENCES Department)
+
+CREATE TABLE Application(
+    aid:              INTEGER,
+    fname:            CHAR(30),
+    lname:            CHAR(30),
+    cv:               CHAR(30),
+    phone_no:         INTEGER,
+    e-mail:           CHAR(30),
+    application_date: CHAR(30), 
+    status:           CHAR(30),
+    PRIMARY KEY (aid),
+    jpid:             INTEGER,
+    FOREIGN KEY jpid REFERENCES Jop_Post)
+
+CREATE TABLE Attendance(
+    eid:              INTEGER,
+    timestamp:        CHAR(30),
+    type:             CHAR(30),
+    PRIMARY KEY (eid, timestamp),
+    FOREIGN KEY eid REFERENCES Employee)
+
+CREATE TABLE Employee_Roles(
+    eid:              INTEGER,
+    role:             CHAR(30),
+    PRIMARY KEY (eid, role),
+    FOREIGN KEY eid REFERENCES Employee)
