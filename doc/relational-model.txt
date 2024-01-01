@@ -13,7 +13,7 @@ CREATE TABLE Employee(
     sex:              CHAR(6),
     dob:              CHAR(10),
     PRIMARY KEY (id),
-    manager_id:       INTEGER,
+    department_id:       INTEGER,
     FOREIGN KEY manager_id REFERENCES Department,
     supervisor_id     INTEGER,
     FOREIGN KEY supervisor_id REFERENCES Employee)
@@ -22,7 +22,7 @@ CREATE TABLE Department(
     id:               INTEGER,
     name:             CHAR(30),
     PRIMARY KEY (id),
-    employee_id:      INTEGER,
+    manager_id:      INTEGER,
     FOREIGN KEY employee_id REFERENCES Employee)
 
 CREATE TABLE Job_Post(
