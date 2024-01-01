@@ -47,8 +47,6 @@ Supplier:
         - System Generated
         - Unique
     + Name
-        - First Name
-        - Last Name
 
 Item:
     + ID
@@ -69,8 +67,6 @@ Customer:
         - System Generated
         - Unique
     + Name
-        - First Name
-        - Last Name
     + Phone Number
     + Email
 
@@ -78,8 +74,6 @@ Order:
     + ID
         - System Generated
         - Unique
-    + Supplier ID
-        - Foreign key to Supplier
     + Transaction ID
         - Foreign key to Transaction
 
