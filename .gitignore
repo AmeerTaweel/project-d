@@ -1,2 +1,5 @@
 # Direnv Cache
 .direnv/
+
+# Local MySQL Directory
+mysql

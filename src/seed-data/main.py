@@ -1,14 +1,17 @@
 import argparse
+import re
 from collections import Counter
 from datetime import date, timedelta
 import numpy as np
-import pandas as pd
+import mysql.connector
 
 
 ################################################################################
-# Parse Arguments
+# Constants
 ################################################################################
 
+
+# Commands / Functionalities
 POPULATE       = "populate"
 COURSE_PROMPTS = "course-prompts"
 COURSE_IMAGES  = "course-images"
@@ -18,6 +21,39 @@ DRIVER_PROMPTS = "driver-prompts"
 DRIVER_IMAGES  = "driver-images"
 CAR_PROMPTS    = "car-prompts"
 CAR_IMAGES     = "car-images"
+
+TEAM_TO_SOLO_RATIO = 0.5
+
+DB_NAME     = "projectd"
+DB_HOST     = "localhost"
+DB_USERNAME = "root"
+
+SKILL_MEAN    = 0.5
+SKILL_STD     = 0.2
+
+LEN_MEAN = 17
+LEN_STD  = 5
+LEN_MIN  = 3
+DIF_MIN  = 0
+DIF_MAX  = 1
+
+DATE_BEGIN = date.fromisoformat("2019-01-01")
+DATE_END   = date.fromisoformat("2024-01-23")
+
+SPEED_CONSTANT = 180
+MEAN_DIFF      = 15
+STD_DIFF       = 15
+
+DELTA                  = timedelta(days = 1)
+TIME_ATTACK_COUNT_MEAN = 3
+TIME_ATTACK_COUNT_STD  = 1
+P_INDIV                = 5 / 7
+P_TEAM                 = 2 / 7
+
+
+################################################################################
+# Parse Arguments
+################################################################################
 
 parser = argparse.ArgumentParser(prog = "seed-data")
 
@@ -33,110 +69,163 @@ parser.add_argument("functionality", choices = [
     CAR_IMAGES
 ])
 
+parser.add_argument("-s", "--seed",  type = int,  default = 0)
+parser.add_argument("-f", "--force", action = "store_true")
+
 args = parser.parse_args()
 
-func = args.functionality
+# Arguments
+func  = args.functionality
+seed  = args.seed
+force = args.force
 
 
 ################################################################################
-# Load Courses
+# Set Random Seed
+################################################################################
+
+
+np.random.seed(seed)
+
+
+################################################################################
+# Helper Functions
+################################################################################
+
+
+def load_csv(file_name):
+    return np.genfromtxt(
+        file_name,
+        delimiter = ",",
+        dtype = None,
+        skip_header = 1,
+        encoding = "utf8"
+    )
+
+
+def get_filename(name, ext):
+    filename_dirty = name.lower().replace(" ", "-")
+    filename_clean = re.sub(r"[^a-zA-Z0-9\-]", "", filename_dirty)
+    return f"{filename_clean}.{ext}"
+
+
+def gen_image_column(entity_type, name_column):
+    return [
+        f"images/{entity_type}/{get_filename(name, 'png')}"
+        for name in name_column
+    ]
+
+
+################################################################################
+# Load Data
 ################################################################################
 
 
 # Load InitialD Courses
-courses_initial_d = pd.read_csv("./courses-initial-d.csv")
+# Name, Location
+courses_initial_d = load_csv("./courses-initial-d.csv")
 
 # Load Synthetic Courses
 # Generated using ChatGPT 4
-courses_synthetic = pd.read_csv("./courses-synthetic.csv")
+# Name, Location
+courses_synthetic = load_csv("./courses-synthetic.csv")
 
-# Combine Data
-courses = pd.concat([courses_initial_d, courses_synthetic], ignore_index = True)
-
-
-################################################################################
-# Load Teams
-################################################################################
-
+# Combine Courses
+courses = np.r_[courses_initial_d, courses_synthetic]
 
 # Load InitialD Teams
-teams_initial_d = pd.read_csv("./teams-initial-d.csv")
+# Name, Location
+teams_initial_d = load_csv("./teams-initial-d.csv")
 
 # Load Synthetic Teams
 # Generated using ChatGPT 4
-teams_synthetic = pd.read_csv("./teams-synthetic.csv")
+# Name, Location
+teams_synthetic = load_csv("./teams-synthetic.csv")
 
-# Combine Data
-teams = pd.concat([teams_initial_d, teams_synthetic], ignore_index = True)
-
-
-################################################################################
-# Load Drivers
-################################################################################
-
+# Combine Teams
+teams = np.r_[teams_initial_d, teams_synthetic]
 
 # Load InitialD Drivers
-drivers_initial_d = pd.read_csv("./drivers-initial-d.csv")
+# Name, Team, Car, Gender
+drivers_initial_d = load_csv("./drivers-initial-d.csv")
 
 # Load Synthetic Drivers
 # Generated using ChatGPT 4
-drivers_synthetic = pd.read_csv("./drivers-synthetic.csv")
+# Name, Car, Gender
+drivers_synthetic = load_csv("./drivers-synthetic.csv")
 
-# Combine Data
-drivers = pd.concat([drivers_initial_d, drivers_synthetic], ignore_index = True)
+
+def gen_synthetic_driver_teams(drivers_synthetic, teams_synthetic):
+    n = len(drivers_synthetic)
+
+    team_count = int(TEAM_TO_SOLO_RATIO * n)
+    solo_count = n - team_count
+
+    rand_teams = np.random.choice(teams_synthetic[:, 0], size = team_count)
+    none_teams = np.repeat("", solo_count)
+
+    teams = np.random.choice(
+        np.r_[rand_teams, none_teams],
+        size = n, replace = False
+    )
+
+    names   = drivers_synthetic[:, 0]
+    cars    = drivers_synthetic[:, 1]
+    genders = drivers_synthetic[:, 2]
+
+    return np.c_[names, teams, cars, genders]
+
+
+# Assign synthetic drivers to synthetic teams
+drivers_synthetic = gen_synthetic_driver_teams(drivers_synthetic, teams_synthetic)
+
+if func == POPULATE:
+    team_counts = Counter(drivers_synthetic[:, 1])
+    max_team_name_len = max([len(k) for k in team_counts])
+    print(f"Assigned {len(team_counts) - 1} teams out of {len(teams_synthetic)}.")
+    print()
+    print("Team Counts:")
+    for team, count in team_counts.items():
+        if team == "": continue
+        print(f"{team.ljust(max_team_name_len)} -> {count}")
+
+# Combine Drivers
+drivers = np.r_[drivers_initial_d, drivers_synthetic]
+
+
+def get_team_indices(drivers, teams):
+    team_indices = np.arange(len(teams))
+    team_names   = teams[:, 0]
+    driver_teams = drivers[:, 1]
+
+    driver_team_indices = np.array([
+        team_indices[team_names == t][0] if t in team_names else None
+        for t in driver_teams
+    ])
+
+    driver_names   = drivers[:, 0]
+    driver_cars    = drivers[:, 2]
+    driver_genders = drivers[:, 3]
+
+    return np.c_[driver_names, driver_team_indices, driver_cars, driver_genders]
+
+
+# Replace team name by team index
+drivers = get_team_indices(drivers, teams)
 
 
 ################################################################################
-# Helpers
+# Add Image Names
 ################################################################################
 
 
-def gen_course_images():
-    # Generate Image File Names
-    images = []
-    for i, row in courses.iterrows():
-        name, location = row
-
-        file_name = f"{name.lower().replace(' ', '-')}.png"
-
-        images.append(f"images/courses/{file_name}")
-    return images
-
-
-def gen_team_images():
-    # Generate Image File Names
-    images = []
-    for i, row in teams.iterrows():
-        name, location = row
-
-        file_name = f"{name.lower().replace(' ', '-')}.png"
-
-        images.append(f"images/teams/{file_name}")
-    return images
-
-
-def gen_driver_images():
-    # Generate Image File Names
-    images = []
-    for i, row in drivers.iterrows():
-        name, team, car, gender = row
-
-        file_name = f"{name.lower().replace(' ', '-')}.png"
-
-        images.append(f"images/drivers/{file_name}")
-    return images
-
-
-def gen_car_images():
-    # Generate Image File Names
-    images = []
-    for i, row in drivers.iterrows():
-        name, team, car, gender = row
-
-        file_name = f"{car.lower().replace(' ', '-')}.png"
-
-        images.append(f"images/cars/{file_name}")
-    return images
+courses = np.c_[courses, gen_image_column("courses", courses[:, 0])]
+teams   = np.c_[teams, gen_image_column("teams", teams[:, 0])]
+drivers = np.c_[
+    drivers,
+    gen_image_column("drivers", drivers[:, 0]),
+    gen_image_column("cars",    drivers[:, 2])
+]
 
 
 ################################################################################
@@ -144,40 +233,37 @@ def gen_car_images():
 ################################################################################
 
 
-def course_prompts():
+def course_prompts(courses):
     # Generate ChatGPT Prompts
-    for i, row in courses.iterrows():
-        name, location = row
+    for name, loc, _ in courses:
         print(
-            f"{name} is a street racing course in the {location}.",
+            f"{name} is a street racing course in the {loc}.",
             "Generate a picture for the racing course."
         )
 
 
-def course_images():
-    for image in gen_course_images():
+def course_images(courses):
+    for _, _, image in courses:
         print(image.split("/")[-1])
 
 
-def team_prompts():
+def team_prompts(teams):
     # Generate ChatGPT Prompts
-    for i, row in teams.iterrows():
-        name, location = row
+    for name, loc, _ in teams:
         print(
-            f"{name} is a Japanese street racing team based in {location}.",
+            f"{name} is a Japanese street racing team based in {loc}.",
             "Generate a logo for this team."
         )
 
 
-def team_images():
-    for image in gen_team_images():
+def team_images(teams):
+    for _, _, image in teams:
         print(image.split("/")[-1])
 
 
-def driver_prompts():
+def driver_prompts(drivers):
     # Generate ChatGPT Prompts
-    for i, row in drivers.iterrows():
-        name, team, car, gender = row
+    for name, _, car, gender, _, _ in drivers:
         if gender == "Male":
             print(
                 f"{name} is a street driver.",
@@ -194,51 +280,45 @@ def driver_prompts():
             )
 
 
-def driver_images():
-    for image in gen_driver_images():
+def driver_images(drivers):
+    for _, _, _, _, image, _ in drivers:
         print(image.split("/")[-1])
 
 
-def car_prompts():
+def car_prompts(drivers):
     # Generate ChatGPT Prompts
-    for i, row in drivers.iterrows():
-        name, team, car, gender = row
+    for _, _, car, _, _, _ in drivers:
         print(f"Generate an image of {car} used for street racing.")
 
 
-def car_images():
-    for image in gen_car_images():
+def car_images(drivers):
+    for _, _, _, _, _, image in drivers:
         print(image.split("/")[-1])
 
 
-################################################################################
-# Switch
-################################################################################
-
-
 if   func == COURSE_PROMPTS:
-    course_prompts()
+    course_prompts(courses)
     exit()
 elif func == COURSE_IMAGES:
-    course_images()
+    course_images(courses)
     exit()
 elif func == TEAM_PROMPTS:
-    team_prompts()
+    team_prompts(teams)
     exit()
 elif func == TEAM_IMAGES:
-    team_images()
+    team_images(teams)
     exit()
 elif func == DRIVER_PROMPTS:
-    driver_prompts()
+    driver_prompts(drivers)
     exit()
 elif func == DRIVER_IMAGES:
-    driver_images()
+    driver_images(drivers)
     exit()
 elif func == CAR_PROMPTS:
-    car_prompts()
+    car_prompts(drivers)
     exit()
 elif func == CAR_IMAGES:
-    car_images()
+    car_images(drivers)
     exit()
 
 
@@ -248,43 +328,31 @@ elif func == CAR_IMAGES:
 
 
 ########################################
-## Assign Teams To Synthetic Drivers
+## Initialize Database
 ########################################
 
 
-def assign_teams_synthetic():
-    TEAM_TO_SOLO_RATIO = 0.5
+# Connect to database
+db_connection = mysql.connector.connect(
+    host = DB_HOST,
+    user = DB_USERNAME
+)
 
-    n = len(drivers_synthetic)
+# Create database cursor to perform SQL operation and run queries
+db_cursor = db_connection.cursor(buffered = True)
 
-    team_count = int(TEAM_TO_SOLO_RATIO * n)
-    solo_count = n - team_count
+# Check if database exists
+db_cursor.execute("SHOW DATABASES")
+db_list = [row[0] for row in db_cursor]
 
-    rand_teams = np.random.choice(teams_synthetic.Name, size = team_count)
-    none_teams = [None] * solo_count
+if DB_NAME in db_list:
+    if not force:
+        print(f"ERROR: Database {DB_NAME} already exists.")
+        exit()
+    db_cursor.execute(f"DROP DATABASE {DB_NAME}")
 
-    assignment = np.random.choice(
-        np.array([*rand_teams, *none_teams]),
-        size = n, replace = False
-    )
-
-    return drivers_synthetic.join(pd.DataFrame({"Team": assignment}))
-
-
-drivers_initial_d = drivers_initial_d.replace({np.nan: None})
-drivers_synthetic = assign_teams_synthetic()
-
-drivers = pd.concat([drivers_initial_d, drivers_synthetic], ignore_index = True)
-
-team_counts = Counter(list(drivers.Team))
-
-print(f"Assigned {len(team_counts) - 1} teams out of {len(teams)}.")
-print()
-print("Team Counts:")
-print(pd.DataFrame({
-    "Team" : [k              for k in team_counts.keys() if k != None],
-    "Count": [team_counts[k] for k in team_counts.keys() if k != None]
-}).to_string(index = False))
+db_cursor.execute(f"CREATE DATABASE {DB_NAME}")
+print(f"Created database {DB_NAME}.")
 
 
 ########################################
@@ -293,30 +361,27 @@ print(pd.DataFrame({
 ########################################
 
 
-def assign_drivers_skills():
-    TALENT_MEAN    = 0.5
-    TALENT_STD     = 0.2
-    DILIGENCE_MEAN = 0.5
-    DILIGENCE_STD  = 0.2
-
+def assign_drivers_skills(drivers):
     n = len(drivers)
 
-    talent = np.random.normal(TALENT_MEAN, TALENT_STD, size = n)
-    talent = [max(0, t) for t in talent]
-    talent = [min(1, t) for t in talent]
+    skill = np.random.normal(SKILL_MEAN, SKILL_STD, size = n)
+    skill = np.clip(skill, 0, 1)
 
-    diligence = np.random.normal(DILIGENCE_MEAN, DILIGENCE_STD, size = n)
-    diligence = [max(0, d) for d in diligence]
-    diligence = [min(1, d) for d in diligence]
-    
-    return drivers.join(pd.DataFrame({
-        "Talent"   : talent,
-        "Diligence": diligence,
-        "Skill"    : talent
-    }))
+    return np.c_[drivers, skill]
 
 
-drivers = assign_drivers_skills()
+drivers = assign_drivers_skills(drivers)
+
+skills = drivers[:, 6]
+print()
+just = lambda criteria : str(len(skills[criteria])).rjust(len(str(len(drivers))))
+print(f"Drivers with skill == 0          : {just(skills == 0)}")
+print(f"Drivers with skill in (0,   0.05]: {just(np.logical_and((skills > 0), (skills <= 0.05)))}")
+print(f"Drivers with skill in (0.05, 0.1]: {just(np.logical_and((skills > 0.05), (skills <= 0.1)))}")
+print(f"Drivers with skill in (0.1,  0.5]: {just(np.logical_and((skills > 0.1), (skills <= 0.5)))}")
+print(f"Drivers with skill in (0.5,  0.9]: {just(np.logical_and((skills > 0.5), (skills <= 0.9)))}")
+print(f"Drivers with skill in (0.9, 0.95]: {just(np.logical_and((skills > 0.9), (skills <= 0.95)))}")
+print(f"Drivers with skill == 1          : {just(skills == 1)}")
 
 
 ########################################
@@ -325,30 +390,29 @@ drivers = assign_drivers_skills()
 ########################################
 
 
-def assign_course_length_and_difficulty():
-    LEN_MEAN = 17
-    LEN_STD  = 5
-    DIF_MIN  = 0
-    DIF_MAX  = 1
-
+def assign_course_length_and_difficulty(courses):
     n = len(courses)
 
     lens = np.random.normal(LEN_MEAN, LEN_STD, size = n)
-    lens = [max(3, l) for l in lens]
+    lens = np.clip(lens, LEN_MIN, None)
 
-    min_len = min(lens)
-    max_len = max(lens)
+    min_len = float(np.min(lens))
+    max_len = float(np.max(lens))
+    rng_len = max_len - min_len
 
     # Short tracks tend to be more difficult
     difs = [
-        np.random.uniform(DIF_MIN + (1 - ((l - min_len) / (max_len - min_len))) * ((DIF_MAX - DIF_MIN) / 2), DIF_MAX)
+        np.random.uniform(
+            DIF_MIN + (1 - ((l - min_len) / rng_len)) * ((DIF_MAX - DIF_MIN) / 2),
+            DIF_MAX
+        )
         for l in lens
     ]
 
-    return courses.join(pd.DataFrame({"Length": lens, "Difficulty": difs}))
+    return np.c_[courses, lens, difs]
 
 
-courses = assign_course_length_and_difficulty()
+courses = assign_course_length_and_difficulty(courses)
 
 
 ########################################
@@ -356,23 +420,18 @@ courses = assign_course_length_and_difficulty()
 ########################################
 
 
-DATE_BEGIN = date.fromisoformat("2019-01-01")
-DATE_END   = date.fromisoformat("2024-01-23")
-
-
 def sim_time(driver, course):
-    SPEED_CONSTANT = 180
-    MEAN_DIFF      = 15
-    STD_DIFF       = 15
-
-    skill      = drivers.Skill[driver]
-    length     = courses.Length[course]
-    difficulty = courses.Difficulty[course]
+    skill      = float(driver[6])
+    length     = float(course[3])
+    difficulty = float(course[4])
 
     speed_mean = SPEED_CONSTANT / (1 + difficulty)
 
+    # Small randomness to break ties
+    rand = np.random.uniform(-0.01, 0.01)
+
     speed = np.random.normal(
-        speed_mean + (skill * 2 - 1) * MEAN_DIFF,
+        speed_mean + (skill * 2 - 1) * MEAN_DIFF + rand,
         difficulty * (1 - skill) * STD_DIFF
     )
 
@@ -381,20 +440,16 @@ def sim_time(driver, course):
     return time
 
 
-DELTA                  = timedelta(days = 1)
-TIME_ATTACK_COUNT_MEAN = 3
-TIME_ATTACK_COUNT_STD  = 1
-P_INDIV                = 5 / 7
-P_TEAM                 = 2 / 7
-
 day = DATE_BEGIN
 
-time_attacks       = []
-individual_battles = []
-team_battles       = []
+time_attacks       = ()
+individual_battles = ()
+team_battles       = ()
 
-while day <= DATE_END:
-    day += DELTA
+print()
+
+while day < DATE_END:
+    print(f"\rSimulating Day {day}...", end = "")
 
     ####################
     ### Time Attacks
@@ -409,9 +464,9 @@ while day <= DATE_END:
         # Pick Course
         course = np.random.choice(len(courses))
 
-        time = sim_time(driver, course)
+        time = sim_time(drivers[driver], courses[course])
 
-        time_attacks.append((driver, course, date, time))
+        time_attacks = (*time_attacks, (driver, course, day, time))
 
     ####################
     ### Indiv. Battles
@@ -425,13 +480,16 @@ while day <= DATE_END:
         # Pick Course
         course = np.random.choice(len(courses))
 
-        time1 = sim_time(driver1, course)
-        time2 = sim_time(driver2, course)
+        time1 = sim_time(drivers[driver1], courses[course])
+        time2 = sim_time(drivers[driver2], courses[course])
 
         if time1 == time2:
-            print("Draw in individual battles.")
+            print("\rDraw in individual battles.")
 
-        individual_battles.append((driver1, driver2, course, date, time1, time2))
+        individual_battles = (
+            *individual_battles,
+            (driver1, driver2, course, day, time1, time2)
+        )
 
     ####################
     ### Team Battles
@@ -443,61 +501,215 @@ while day <= DATE_END:
         # Pick Teams
         team1, team2 = np.random.choice(len(teams), 2, replace = False)
         # Get Individual Battles Count
-        team1_name = teams.Name[team1]
-        team1_drivers = drivers[drivers.Team == team1_name]
-        team2_name = teams.Name[team2]
-        team2_drivers = drivers[drivers.Team == team2_name]
+        team1_drivers = np.arange(len(drivers))[drivers[:, 1] == team1]
+        team2_drivers = np.arange(len(drivers))[drivers[:, 1] == team2]
         battle_count = min(len(team1_drivers), len(team2_drivers))
         # Pick Top Drivers From Each Team
-        team1_participants = team1_drivers.sort_values(by = "Skill", ascending = False)
-        team1_participants = list(team1_participants.iloc[:battle_count].index)
-        team2_participants = team2_drivers.sort_values(by = "Skill", ascending = False)
-        team2_participants = list(team2_participants.iloc[:battle_count].index)
+        team1_drivers = team1_drivers[np.argsort(drivers[team1_drivers, 6])]
+        team1_drivers = team1_drivers[:battle_count]
+        team2_drivers = team2_drivers[np.argsort(drivers[team1_drivers, 6])]
+        team2_drivers = team2_drivers[:battle_count]
 
         # Pick Course
         course = np.random.choice(len(courses))
 
-        battle = []
+        battles = ()
 
         points1 = 0
         points2 = 0
 
-        for driver1, driver2 in zip(team1_participants, team2_participants):
-            time1 = sim_time(driver1, course)
-            time2 = sim_time(driver2, course)
+        for driver1, driver2 in zip(team1_drivers, team2_drivers):
+            time1 = sim_time(drivers[driver1], courses[course])
+            time2 = sim_time(drivers[driver2], courses[course])
             if time1 < time2: points1 += 1
             if time2 < time1: points2 += 1
-            battle.append((driver1, driver2, time1, time2))
+            battles = (*battles, (driver1, driver2, time1, time2))
 
         # No Draws
         i = 0
         while points1 == points2:
-            driver1 = team1_participants[i]
-            driver2 = team2_participants[i]
-            time1 = sim_time(driver1, course)
-            time2 = sim_time(driver2, course)
+            driver1 = team1_drivers[i]
+            driver2 = team2_drivers[i]
+            time1 = sim_time(drivers[driver1], courses[course])
+            time2 = sim_time(drivers[driver2], courses[course])
             if time1 < time2: points1 += 1
             if time2 < time1: points2 += 1
-            battle.append((driver1, driver2, time1, time2))
+            battles = (*battles, (driver1, driver2, time1, time2))
             i += 1
             i = i % battle_count
 
-        team_battles.append((team1, team2, course, date, battle))
+        team_battles = (*team_battles, (team1, team2, course, day, battles))
 
-    ####################
-    ### Racers Progress
-    ####################
+    day += DELTA
 
-    SKILL_DIFF = 1 / (DATE_END - DATE_BEGIN).days
-    for i in range(len(drivers)):
-        diligence = drivers.Diligence[i]
-        diligence = diligence * 2 - 1
-        skill     = drivers.Skill[i]
-        progress  = min(1, max(-1, np.random.normal(diligence)))
-        skill     = skill + progress * SKILL_DIFF
-        skill     = min(1, max(0, skill))
-        drivers.loc[i, "Skill"] = skill
 
-print(f"Simulated {len(time_attacks)} time attacks.")
-print(f"Simulated {len(individual_battles)} individual battles.")
-print(f"Simulated {len(team_battles)} team battles.")
+print("\r")
+max_num_len = max([len(str(len(i))) for i in (time_attacks, individual_battles, team_battles)])
+print(f"Simulated {str(len(time_attacks)).rjust(max_num_len)} time       attacks.")
+print(f"Simulated {str(len(individual_battles)).rjust(max_num_len)} individual battles.")
+print(f"Simulated {str(len(team_battles)).rjust(max_num_len)} team       battles.")
+
+
+########################################
+## Create Tables
+########################################
+
+
+# Use database in the following queries
+db_cursor.execute(f"USE {DB_NAME}")
+
+# Courses Table
+db_cursor.execute("""
+    CREATE TABLE Courses (
+        ID   INT          NOT NULL AUTO_INCREMENT,
+        Name VARCHAR(255) NOT NULL,
+        Loc  VARCHAR(255) NOT NULL,
+        Img  VARCHAR(255) NOT NULL,
+        PRIMARY KEY (ID)
+    )
+""")
+
+# Teams Table
+db_cursor.execute("""
+    CREATE TABLE Teams (
+        ID   INT          NOT NULL AUTO_INCREMENT,
+        Name VARCHAR(255) NOT NULL,
+        Loc  VARCHAR(255) NOT NULL,
+        Logo VARCHAR(255) NOT NULL,
+        PRIMARY KEY (ID)
+    )
+""")
+
+# Drivers Table
+db_cursor.execute("""
+    CREATE TABLE Drivers (
+        ID     INT          NOT NULL AUTO_INCREMENT,
+        Name   VARCHAR(255) NOT NULL,
+        Car    VARCHAR(255) NOT NULL,
+        TeamID INT,
+        Sex    VARCHAR(255) NOT NULL,
+        Pic    VARCHAR(255) NOT NULL,
+        CarPic VARCHAR(255) NOT NULL,
+        PRIMARY KEY (ID),
+        FOREIGN KEY (TeamID) REFERENCES Teams(ID)
+    )
+""")
+
+# Team Battles Table
+db_cursor.execute("""
+    CREATE TABLE TeamBattles (
+        ID INT NOT NULL AUTO_INCREMENT,
+        PRIMARY KEY (ID)
+    )
+""")
+
+# Battles Table
+db_cursor.execute("""
+    CREATE TABLE Battles (
+        ID           INT NOT NULL AUTO_INCREMENT,
+        TeamBattleID INT,
+        PRIMARY KEY (ID),
+        FOREIGN KEY (TeamBattleID) REFERENCES TeamBattles(ID)
+    )
+""")
+
+# Records Table
+db_cursor.execute("""
+    CREATE TABLE Records (
+        ID       INT    NOT NULL AUTO_INCREMENT,
+        DriverID INT    NOT NULL,
+        CourseID INT    NOT NULL,
+        Date     DATE   NOT NULL,
+        Minutes  DOUBLE NOT NULL,
+        BattleID INT,
+        PRIMARY KEY (ID),
+        FOREIGN KEY (DriverID) REFERENCES Drivers(ID),
+        FOREIGN KEY (CourseID) REFERENCES Courses(ID),
+        FOREIGN KEY (BattleID) REFERENCES Battles(ID)
+    )
+""")
+
+
+########################################
+## Insert Data
+########################################
+
+
+# Courses
+
+for name, loc, image, _, _ in courses:
+    db_cursor.execute(f"""
+        INSERT INTO Courses (Name, Loc, Img) VALUES (
+            "{name}", "{loc}", "{image}"
+        )
+    """)
+
+# Teams
+
+for name, loc, logo in teams:
+    db_cursor.execute(f"""
+        INSERT INTO Teams (Name, Loc, Logo) VALUES (
+            "{name}", "{loc}", "{logo}"
+        )
+    """)
+
+# Drivers
+
+for name, team, car, gender, pic, car_pic, _ in drivers:
+    team = int(team) + 1 if team != None else "NULL"
+    db_cursor.execute(f"""
+        INSERT INTO Drivers (Name, Car, TeamID, Sex, Pic, CarPic) VALUES (
+            "{name}", "{car}", {team}, "{gender}", "{pic}", "{car_pic}"
+        )
+    """)
+
+# Time Attacks
+
+for driver, course, day, time in time_attacks:
+    db_cursor.execute(f"""
+        INSERT INTO Records (DriverID, CourseID, Date, Minutes, BattleID) VALUES (
+            {driver + 1}, {course + 1}, "{day}", {time * 60}, NULL
+        )
+    """)
+
+# Individual Battles
+
+battle_id = 0
+
+for driver1, driver2, course, day, time1, time2 in individual_battles:
+    db_cursor.execute(f"""
+        INSERT INTO Battles (TeamBattleID) VALUES (NULL)
+    """)
+    battle_id += 1
+    db_cursor.execute(f"""
+        INSERT INTO Records (DriverID, CourseID, Date, Minutes, BattleID) VALUES (
+            {driver1 + 1}, {course + 1}, "{day}", {time1 * 60}, {battle_id}
+        ), (
+            {driver2 + 1}, {course + 1}, "{day}", {time2 * 60}, {battle_id}
+        )
+    """)
+
+# Insert Team Battles
+
+team_battle_id = 0
+
+for team1, team2, course, day, battle in team_battles:
+    db_cursor.execute(f"""
+        INSERT INTO TeamBattles () VALUES ()
+    """)
+    team_battle_id += 1
+    for driver1, driver2, time1, time2 in battle:
+        db_cursor.execute(f"""
+            INSERT INTO Battles (TeamBattleID) VALUES ({team_battle_id})
+        """)
+        battle_id += 1
+        db_cursor.execute(f"""
+            INSERT INTO Records (DriverID, CourseID, Date, Minutes, BattleID) VALUES (
+                {driver1 + 1}, {course + 1}, "{day}", {time1 * 60}, {battle_id}
+            ), (
+                {driver2 + 1}, {course + 1}, "{day}", {time2 * 60}, {battle_id}
+            )
+        """)
+
+db_connection.commit()
+db_connection.close()
