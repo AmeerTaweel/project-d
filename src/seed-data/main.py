@@ -19,8 +19,6 @@ TEAM_PROMPTS   = "team-prompts"
 TEAM_IMAGES    = "team-images"
 DRIVER_PROMPTS = "driver-prompts"
 DRIVER_IMAGES  = "driver-images"
-CAR_PROMPTS    = "car-prompts"
-CAR_IMAGES     = "car-images"
 
 TEAM_TO_SOLO_RATIO = 0.5
 
@@ -64,9 +62,7 @@ parser.add_argument("functionality", choices = [
     TEAM_PROMPTS,
     TEAM_IMAGES,
     DRIVER_PROMPTS,
-    DRIVER_IMAGES,
-    CAR_PROMPTS,
-    CAR_IMAGES
+    DRIVER_IMAGES
 ])
 
 parser.add_argument("-s", "--seed",  type = int,  default = 0)
@@ -221,11 +217,7 @@ drivers = get_team_indices(drivers, teams)
 
 courses = np.c_[courses, gen_image_column("courses", courses[:, 0])]
 teams   = np.c_[teams, gen_image_column("teams", teams[:, 0])]
-drivers = np.c_[
-    drivers,
-    gen_image_column("drivers", drivers[:, 0]),
-    gen_image_column("cars",    drivers[:, 2])
-]
+drivers = np.c_[drivers, gen_image_column("drivers", drivers[:, 0])]
 
 
 ################################################################################
@@ -263,7 +255,7 @@ def team_images(teams):
 
 def driver_prompts(drivers):
     # Generate ChatGPT Prompts
-    for name, _, car, gender, _, _ in drivers:
+    for name, _, car, gender, _ in drivers:
         if gender == "Male":
             print(
                 f"{name} is a street driver.",
@@ -281,18 +273,7 @@ def driver_prompts(drivers):
 
 
 def driver_images(drivers):
-    for _, _, _, _, image, _ in drivers:
-        print(image.split("/")[-1])
-
-
-def car_prompts(drivers):
-    # Generate ChatGPT Prompts
-    for _, _, car, _, _, _ in drivers:
-        print(f"Generate an image of {car} used for street racing.")
-
-
-def car_images(drivers):
-    for _, _, _, _, _, image in drivers:
+    for _, _, _, _, image  in drivers:
         print(image.split("/")[-1])
 
 
@@ -313,12 +294,6 @@ elif func == DRIVER_PROMPTS:
     exit()
 elif func == DRIVER_IMAGES:
     driver_images(drivers)
-    exit()
-elif func == CAR_PROMPTS:
-    car_prompts(drivers)
-    exit()
-elif func == CAR_IMAGES:
-    car_images(drivers)
     exit()
 
 
@@ -372,7 +347,7 @@ def assign_drivers_skills(drivers):
 
 drivers = assign_drivers_skills(drivers)
 
-skills = drivers[:, 6]
+skills = drivers[:, 5]
 print()
 just = lambda criteria : str(len(skills[criteria])).rjust(len(str(len(drivers))))
 print(f"Drivers with skill == 0          : {just(skills == 0)}")
@@ -421,7 +396,7 @@ courses = assign_course_length_and_difficulty(courses)
 
 
 def sim_time(driver, course):
-    skill      = float(driver[6])
+    skill      = float(driver[5])
     length     = float(course[3])
     difficulty = float(course[4])
 
@@ -505,9 +480,9 @@ while day < DATE_END:
         team2_drivers = np.arange(len(drivers))[drivers[:, 1] == team2]
         battle_count = min(len(team1_drivers), len(team2_drivers))
         # Pick Top Drivers From Each Team
-        team1_drivers = team1_drivers[np.argsort(drivers[team1_drivers, 6])]
+        team1_drivers = team1_drivers[np.argsort(drivers[team1_drivers, 5])]
         team1_drivers = team1_drivers[:battle_count]
-        team2_drivers = team2_drivers[np.argsort(drivers[team1_drivers, 6])]
+        team2_drivers = team2_drivers[np.argsort(drivers[team1_drivers, 5])]
         team2_drivers = team2_drivers[:battle_count]
 
         # Pick Course
@@ -564,6 +539,7 @@ db_cursor.execute("""
         ID   INT          NOT NULL AUTO_INCREMENT,
         Name VARCHAR(255) NOT NULL,
         Loc  VARCHAR(255) NOT NULL,
+        Len  DOUBLE       NOT NULL,
         Img  VARCHAR(255) NOT NULL,
         PRIMARY KEY (ID)
     )
@@ -589,7 +565,6 @@ db_cursor.execute("""
         TeamID INT,
         Sex    VARCHAR(255) NOT NULL,
         Pic    VARCHAR(255) NOT NULL,
-        CarPic VARCHAR(255) NOT NULL,
         PRIMARY KEY (ID),
         FOREIGN KEY (TeamID) REFERENCES Teams(ID)
     )
@@ -637,10 +612,10 @@ db_cursor.execute("""
 
 # Courses
 
-for name, loc, image, _, _ in courses:
+for name, loc, image, len, _ in courses:
     db_cursor.execute(f"""
-        INSERT INTO Courses (Name, Loc, Img) VALUES (
-            "{name}", "{loc}", "{image}"
+        INSERT INTO Courses (Name, Loc, Len, Img) VALUES (
+            "{name}", "{loc}", {len}, "{image}"
         )
     """)
 
@@ -655,11 +630,11 @@ for name, loc, logo in teams:
 
 # Drivers
 
-for name, team, car, gender, pic, car_pic, _ in drivers:
+for name, team, car, gender, pic, _ in drivers:
     team = int(team) + 1 if team != None else "NULL"
     db_cursor.execute(f"""
-        INSERT INTO Drivers (Name, Car, TeamID, Sex, Pic, CarPic) VALUES (
-            "{name}", "{car}", {team}, "{gender}", "{pic}", "{car_pic}"
+        INSERT INTO Drivers (Name, Car, TeamID, Sex, Pic) VALUES (
+            "{name}", "{car}", {team}, "{gender}", "{pic}"
         )
     """)
 
